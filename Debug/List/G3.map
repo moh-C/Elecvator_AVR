@@ -1,6 +1,8 @@
 RAM Allocation [bytes]
 Variable                                                                          Address   Size
 ------------------------------------------------------------------------------------------------
+_base_y                                                                           0x0260       4
+_lcd_maxx                                                                         0x0264       1
 
 EEPROM Allocation [bytes]
 Variable                                                                          Address   Size
@@ -9,8 +11,29 @@ Variable                                                                        
 Register Allocation
 Variable                                                                          Register  Size
 ------------------------------------------------------------------------------------------------
+globalTimer                                                                       R4,R5        2
+second                                                                            R6,R7        2
+currentFloor                                                                      R8,R9        2
+target                                                                            R10,R11      2
+_lcd_x                                                                            R13          1
+_lcd_y                                                                            R12          1
 
 FLASH Allocation [words]
 Function                                                                          Address   Size
 ------------------------------------------------------------------------------------------------
-main                                                                              0x00045     24
+timer0_ovf_isr                                                                    0x00079     22
+LCD_controller                                                                    0x0008F     37
+process_input                                                                     0x000B4     44
+main                                                                              0x000E0     30
+put_buff_G100                                                                     0x000FE     64
+_print_G100                                                                       0x0013E    308
+sprintf                                                                           0x00272     52
+_lcd_write_nibble_G101                                                            0x002A6     20
+_lcd_write_data                                                                   0x002BA     12
+lcd_gotoxy                                                                        0x002C6     13
+lcd_clear                                                                         0x002D3     12
+lcd_putchar                                                                       0x002DF     23
+lcd_puts                                                                          0x002F6     17
+lcd_init                                                                          0x00307     47
+strlen                                                                            0x00336     12
+strlenf                                                                           0x00342     13

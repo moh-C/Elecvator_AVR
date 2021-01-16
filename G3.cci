@@ -1,4 +1,16 @@
-VERSION:3 SOURCE_TIMESTAMP:5230671C
+VERSION:3 SOURCE_TIMESTAMP:523096E0
 NODE:I LEVEL:0 LINE:1 "C:\cvavr\inc\mega32.h"
 NODE:I LEVEL:0 LINE:2 "C:\cvavr\inc\delay.h"
-NODE:F LEVEL:0 LINE:4 "main(void)"
+NODE:I LEVEL:0 LINE:3 "C:\cvavr\inc\stdio.h"
+NODE:V LEVEL:0 LINE:6 "globalTimer -> R4,R5"
+NODE:V LEVEL:0 LINE:7 "second -> R6,R7"
+NODE:V LEVEL:0 LINE:9 "currentFloor -> R8,R9"
+NODE:V LEVEL:0 LINE:10 "target -> R10,R11"
+NODE:I LEVEL:0 LINE:13 "C:\cvavr\inc\alcd.h"
+NODE:F LEVEL:0 LINE:16 "timer0_ovf_isr(void)"
+NODE:F LEVEL:0 LINE:26 "reset_timer(void)"
+NODE:F LEVEL:0 LINE:33 "LCD_controller(int level)"
+NODE:F LEVEL:0 LINE:42 "DC_motor(int position)"
+NODE:F LEVEL:0 LINE:50 "servo_position(int position)"
+NODE:F LEVEL:0 LINE:55 "process_input(void)"
+NODE:F LEVEL:0 LINE:83 "main(void)"
