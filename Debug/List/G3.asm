@@ -1131,21 +1131,33 @@ _tbl10_G100:
 _tbl16_G100:
 	.DB  0x0,0x10,0x0,0x1,0x10,0x0,0x1,0x0
 
+;REGISTER BIT VARIABLES INITIALIZATION
+__REG_BIT_VARS:
+	.DW  0x0012
+
 ;GLOBAL REGISTER VARIABLES INITIALIZATION
 __REG_VARS:
 	.DB  0x0,0x0,0x0,0x0
 	.DB  0x0,0x0,0x0,0x0
 
-_0x4:
-	.DB  0x48,0x69,0x21,0x0,0x0,0x0,0x0,0x0
+_0x1C:
+	.DB  0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+	.DB  0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
+	.DB  0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
 	.DB  0x0,0x0,0x0,0x0,0x0,0x0,0x0,0x0
 _0x0:
-	.DB  0x46,0x6C,0x6F,0x6F,0x72,0x3A,0x20,0x25
-	.DB  0x64,0x0
+	.DB  0x46,0x3A,0x20,0x25,0x64,0x2C,0x20,0x25
+	.DB  0x64,0x2C,0x20,0x25,0x64,0x0,0x43,0x46
+	.DB  0x3A,0x20,0x25,0x64,0x2C,0x54,0x3A,0x20
+	.DB  0x25,0x64,0x0
 _0x2020003:
 	.DB  0x80,0xC0
 
 __GLOBAL_INI_TBL:
+	.DW  0x01
+	.DW  0x02
+	.DW  __REG_BIT_VARS*2
+
 	.DW  0x08
 	.DW  0x04
 	.DW  __REG_VARS*2
@@ -1243,279 +1255,408 @@ __GLOBAL_INI_END:
 	.EQU __sm_adc_noise_red=0x10
 	.SET power_ctrl_reg=mcucr
 	#endif
-;#include <delay.h>
 ;#include <stdio.h>
-;
-;// Declare your global variables here
-;int globalTimer = 0;
-;int second = 0;
-;
-;int currentFloor = 0;
-;int target = 0;
+;#include <delay.h>
 ;
 ;// Alphanumeric LCD functions
 ;#include <alcd.h>
 ;
+;// Declare your global variables here
+;int globalTimer = 0;    // Global timer with period of 8 ms
+;int second = 0;         // Seconds passed
+;
+;int currentFloor = 0;   // The current floor
+;int target = 0;         // This is the target floor
+;bit locked = 0;         // The Elevator is now locked
+;bit firstIter = 1;      // First Iter is for reseting the timer and servo position
+;bit DCMotors = 0;       // Controlling the DC motors
+;bit shouldMove = 0;     // This bit is for making sure we are capturing the inputs
+;bit doorOpen = 1;       // Checking door
+;
 ;// Timer 0 overflow interrupt service routine
 ;interrupt [TIM0_OVF] void timer0_ovf_isr(void)
-; 0000 0011 {
+; 0000 0016 {
 
 	.CSEG
 _timer0_ovf_isr:
 ; .FSTART _timer0_ovf_isr
+	ST   -Y,R0
+	ST   -Y,R1
+	ST   -Y,R25
+	ST   -Y,R26
+	ST   -Y,R27
 	ST   -Y,R30
 	ST   -Y,R31
 	IN   R30,SREG
 	ST   -Y,R30
-; 0000 0012     // Reinitialize Timer 0 value
-; 0000 0013     TCNT0=0x06;
-	LDI  R30,LOW(6)
-	OUT  0x32,R30
-; 0000 0014     // Place your code here
-; 0000 0015     globalTimer++;
+; 0000 0017     // Place your code here
+; 0000 0018     globalTimer++;
 	MOVW R30,R4
 	ADIW R30,1
 	MOVW R4,R30
-; 0000 0016     if(globalTimer==125) second++;
+; 0000 0019     if(globalTimer%125==0) {
+	MOVW R26,R4
 	LDI  R30,LOW(125)
 	LDI  R31,HIGH(125)
-	CP   R30,R4
-	CPC  R31,R5
+	CALL __MODW21
+	SBIW R30,0
 	BRNE _0x3
+; 0000 001A         second++;
 	MOVW R30,R6
 	ADIW R30,1
 	MOVW R6,R30
-; 0000 0017 }
+	SBIW R30,1
+; 0000 001B         globalTimer = 0;
+	CLR  R4
+	CLR  R5
+; 0000 001C     }
+; 0000 001D }
 _0x3:
 	LD   R30,Y+
 	OUT  SREG,R30
 	LD   R31,Y+
 	LD   R30,Y+
+	LD   R27,Y+
+	LD   R26,Y+
+	LD   R25,Y+
+	LD   R1,Y+
+	LD   R0,Y+
 	RETI
 ; .FEND
 ;
-;// Reseting the main timer to avoid confusion
+;// Reset timer and globalTimer and second
 ;void reset_timer()
-; 0000 001B {
-; 0000 001C     TCNT0 = 0x06; //Set the counter to zero
-; 0000 001D     globalTimer = 0;
-; 0000 001E }
+; 0000 0021 {
+; 0000 0022     TCNT0 = 0x00;       // Set the counter to zero
+; 0000 0023     globalTimer = 0;    // 8ms counter is reset
+; 0000 0024     second = 0;         // Resetting the second
+; 0000 0025     lcd_clear();
+; 0000 0026 }
+;
+;// For controlling the DC Motors
+;void DC_motor(int position)
+; 0000 002A {
+_DC_motor:
+; .FSTART _DC_motor
+; 0000 002B     // The PWM is in range of 0 to 19999!
+; 0000 002C     OCR1B = (position) * 10 * 20;
+	ST   -Y,R27
+	ST   -Y,R26
+;	position -> Y+0
+	LD   R30,Y
+	LDD  R31,Y+1
+	LDI  R26,LOW(10)
+	LDI  R27,HIGH(10)
+	CALL __MULW12
+	LDI  R26,LOW(20)
+	LDI  R27,HIGH(20)
+	CALL __MULW12
+	OUT  0x28+1,R31
+	OUT  0x28,R30
+; 0000 002D }
+	JMP  _0x2080002
+; .FEND
+;
+;// Given a degree, the servo with move to the desired degree/step.
+;// For example 0 will result in 0 degrees and 90 is result in 90 degrees
+;void servo_position(int position)
+; 0000 0032 {
+_servo_position:
+; .FSTART _servo_position
+; 0000 0033     // Servo has to move in range of 0 to 90 degrees thus according to datasheet,
+; 0000 0034     // a pulse with a width of 1.5ms will result in 0 degree while a pulse with a
+; 0000 0035     // width of 2 ms will result in 90 degrees!
+; 0000 0036     OCR1A = 1499 + position * 50/9;
+	ST   -Y,R27
+	ST   -Y,R26
+;	position -> Y+0
+	LD   R30,Y
+	LDD  R31,Y+1
+	LDI  R26,LOW(50)
+	LDI  R27,HIGH(50)
+	CALL __MULW12
+	MOVW R26,R30
+	LDI  R30,LOW(9)
+	LDI  R31,HIGH(9)
+	CALL __DIVW21
+	SUBI R30,LOW(-1499)
+	SBCI R31,HIGH(-1499)
+	OUT  0x2A+1,R31
+	OUT  0x2A,R30
+; 0000 0037 }
+	JMP  _0x2080002
+; .FEND
+;
+;// Processing the input from buttons
+;void process_input()
+; 0000 003B {
+; 0000 003C 
+; 0000 003D     // First of all we have to check whether we are in locked mode or not
+; 0000 003E     if(!locked && !shouldMove) {
+; 0000 003F         int tempTarget = 255-PINB; // PINB is the input/target
+; 0000 0040 
+; 0000 0041         switch(tempTarget)
+;	tempTarget -> Y+0
+; 0000 0042         {
+; 0000 0043             case 1:
+; 0000 0044                 target = 0;
+; 0000 0045                 break;
+; 0000 0046             case 2:
+; 0000 0047                 target = 1;
+; 0000 0048                 break;
+; 0000 0049             case 4:
+; 0000 004A                 target = 2;
+; 0000 004B                 break;
+; 0000 004C             case 8:
+; 0000 004D                 target = 3;
+; 0000 004E                 break;
+; 0000 004F             case 16:
+; 0000 0050                 target = 4;
+; 0000 0051                 break;
+; 0000 0052         }
+; 0000 0053 
+; 0000 0054         if(target!=currentFloor) shouldMove = 1;
+; 0000 0055     }
+; 0000 0056 }
+;
+;// Processing the floor to be displayed in LCD and furthur processings
+;void process_floors()
+; 0000 005A {
+; 0000 005B     if(target>currentFloor) currentFloor++;
+; 0000 005C     else currentFloor--;
+; 0000 005D }
+;
+;// Moving the servo motors
+;void process_servo_motors()
+; 0000 0061 {
+; 0000 0062     if(doorOpen)    servo_position(0);
+; 0000 0063     else    servo_position(90);
+; 0000 0064 }
+;
+;// Moving the DC motors as well as controlling the speed
+;void process_dc_motors()
+; 0000 0068 {
+; 0000 0069     // Difference of floors
+; 0000 006A     int difference = target - difference;
+; 0000 006B     // If negative, negate it
+; 0000 006C     if(difference < 0) difference*=-1;
+;	difference -> R16,R17
+; 0000 006D 
+; 0000 006E     // If DC motors should be moving start moving them
+; 0000 006F     if(DCMotors){
+; 0000 0070         // If we are in the first second, accelerate and if we are in the middle of the transportation
+; 0000 0071         // constant speed. Otherwise, decelerate
+; 0000 0072 
+; 0000 0073         if(second <= 1)
+; 0000 0074             DC_motor(80 * globalTimer * 10);
+; 0000 0075         else if(second == 4 && difference == 1) DC_motor(80 * (125-globalTimer) * 10);
+; 0000 0076         else DC_motor(80*125*10);
+; 0000 0077     }
+; 0000 0078 }
 ;
 ;// Writing to LCD
 ;void LCD_controller(int level)
-; 0000 0022 {
+; 0000 007C {
 _LCD_controller:
 ; .FSTART _LCD_controller
-; 0000 0023     char currFloor[16] = "Hi!";
-; 0000 0024     sprintf(currFloor,"Floor: %d",level);
+; 0000 007D     char currFloor[16] = "";                    // What we are going to display
+; 0000 007E     char myMan[16] = "";
+; 0000 007F 
+; 0000 0080     sprintf(currFloor,"F: %d, %d, %d",level, globalTimer, second);       // Making the text ready for display
 	ST   -Y,R27
 	ST   -Y,R26
-	SBIW R28,16
-	LDI  R24,16
+	SBIW R28,32
+	LDI  R24,32
 	LDI  R26,LOW(0)
 	LDI  R27,HIGH(0)
-	LDI  R30,LOW(_0x4*2)
-	LDI  R31,HIGH(_0x4*2)
+	LDI  R30,LOW(_0x1C*2)
+	LDI  R31,HIGH(_0x1C*2)
 	CALL __INITLOCB
-;	level -> Y+16
-;	currFloor -> Y+0
+;	level -> Y+32
+;	currFloor -> Y+16
+;	myMan -> Y+0
 	MOVW R30,R28
+	ADIW R30,16
 	ST   -Y,R31
 	ST   -Y,R30
 	__POINTW1FN _0x0,0
 	ST   -Y,R31
 	ST   -Y,R30
-	LDD  R30,Y+20
-	LDD  R31,Y+20+1
-	CALL __CWD1
-	CALL __PUTPARD1
-	LDI  R24,4
+	LDD  R30,Y+36
+	LDD  R31,Y+36+1
+	CALL SUBOPT_0x0
+	MOVW R30,R4
+	CALL SUBOPT_0x0
+	MOVW R30,R6
+	CALL SUBOPT_0x0
+	LDI  R24,12
 	CALL _sprintf
-	ADIW R28,8
-; 0000 0025     lcd_gotoxy(0,0); //lcd_gotoxy ham k cursor ro b xy mibarad
+	ADIW R28,16
+; 0000 0081     lcd_gotoxy(0,0);                            //lcd_gotoxy ham k cursor ro b xy mibarad
 	LDI  R30,LOW(0)
 	ST   -Y,R30
 	LDI  R26,LOW(0)
 	CALL _lcd_gotoxy
-; 0000 0026     lcd_puts(currFloor); // chap bar roye lcd
+; 0000 0082     lcd_puts(currFloor);                        // chap bar roye lcd
+	MOVW R26,R28
+	ADIW R26,16
+	CALL _lcd_puts
+; 0000 0083 
+; 0000 0084     sprintf(myMan,"CF: %d,T: %d",currentFloor, target);    // Making the text ready for display
+	MOVW R30,R28
+	ST   -Y,R31
+	ST   -Y,R30
+	__POINTW1FN _0x0,14
+	ST   -Y,R31
+	ST   -Y,R30
+	MOVW R30,R8
+	CALL SUBOPT_0x0
+	MOVW R30,R10
+	CALL SUBOPT_0x0
+	LDI  R24,8
+	CALL _sprintf
+	ADIW R28,12
+; 0000 0085     lcd_gotoxy(0,1);                            //lcd_gotoxy ham k cursor ro b xy mibarad
+	LDI  R30,LOW(0)
+	ST   -Y,R30
+	LDI  R26,LOW(1)
+	CALL _lcd_gotoxy
+; 0000 0086     lcd_puts(myMan);
 	MOVW R26,R28
 	CALL _lcd_puts
-; 0000 0027 }
-	ADIW R28,18
+; 0000 0087 }
+	ADIW R28,34
 	RET
 ; .FEND
 ;
-;// For controlling the DC Motors
-;void DC_motor(int position)
-; 0000 002B {
-; 0000 002C     // The PWM is in range of 0 to 19999!
-; 0000 002D     OCR1B = 1499 + position * 50/9;
-;	position -> Y+0
-; 0000 002E }
-;
-;// Given a degree, the servo with move to the desired degree/step.
-;// For example 0 with result in 0 degrees and 90 is result in 90 degrees
-;void servo_position(int position)
-; 0000 0033 {
-; 0000 0034     OCR1A = 1499 + position * 50/9;
-;	position -> Y+0
-; 0000 0035 }
-;
-;void process_input()
-; 0000 0038 {
-_process_input:
-; .FSTART _process_input
-; 0000 0039     target = 255-PINB;
-	IN   R30,0x16
-	LDI  R31,0
-	LDI  R26,LOW(255)
-	LDI  R27,HIGH(255)
-	SUB  R26,R30
-	SBC  R27,R31
-	MOVW R10,R26
-; 0000 003A     switch(target)
-	MOVW R30,R10
-; 0000 003B     {
-; 0000 003C         case 1:
-	CPI  R30,LOW(0x1)
-	LDI  R26,HIGH(0x1)
-	CPC  R31,R26
-	BRNE _0x8
-; 0000 003D             target = 0;
-	CLR  R10
-	CLR  R11
-; 0000 003E             break;
-	RJMP _0x7
-; 0000 003F         case 2:
-_0x8:
-	CPI  R30,LOW(0x2)
-	LDI  R26,HIGH(0x2)
-	CPC  R31,R26
-	BRNE _0x9
-; 0000 0040             target = 1;
-	LDI  R30,LOW(1)
-	LDI  R31,HIGH(1)
-	RJMP _0x11
-; 0000 0041             break;
-; 0000 0042         case 4:
-_0x9:
-	CPI  R30,LOW(0x4)
-	LDI  R26,HIGH(0x4)
-	CPC  R31,R26
-	BRNE _0xA
-; 0000 0043             target = 2;
-	LDI  R30,LOW(2)
-	LDI  R31,HIGH(2)
-	RJMP _0x11
-; 0000 0044             break;
-; 0000 0045         case 8:
-_0xA:
-	CPI  R30,LOW(0x8)
-	LDI  R26,HIGH(0x8)
-	CPC  R31,R26
-	BRNE _0xB
-; 0000 0046             target = 3;
-	LDI  R30,LOW(3)
-	LDI  R31,HIGH(3)
-	RJMP _0x11
-; 0000 0047             break;
-; 0000 0048         case 16:
-_0xB:
-	CPI  R30,LOW(0x10)
-	LDI  R26,HIGH(0x10)
-	CPC  R31,R26
-	BRNE _0x7
-; 0000 0049             target = 4;
-	LDI  R30,LOW(4)
-	LDI  R31,HIGH(4)
-_0x11:
-	MOVW R10,R30
-; 0000 004A             break;
-; 0000 004B     }
-_0x7:
-; 0000 004C 
-; 0000 004D     /*if(target==currentFloor){}
-; 0000 004E     else {
-; 0000 004F         reset_timer();
-; 0000 0050     }*/
-; 0000 0051 }
-	RET
-; .FEND
-;
+;// Well this is obvious
 ;void main(void)
-; 0000 0054 {
+; 0000 008B {
 _main:
 ; .FSTART _main
-; 0000 0055 // Declare your local variables here
-; 0000 0056 
-; 0000 0057 // PORTB is input port
-; 0000 0058 DDRB=0x00;
+; 0000 008C     // Declare your local variables here
+; 0000 008D     DDRA = 0xFF;
+	LDI  R30,LOW(255)
+	OUT  0x1A,R30
+; 0000 008E     DDRB = 0x00;
 	LDI  R30,LOW(0)
 	OUT  0x17,R30
-; 0000 0059 PORTB=0xFF;
+; 0000 008F     DDRD = 0xFF;
 	LDI  R30,LOW(255)
-	OUT  0x18,R30
-; 0000 005A 
-; 0000 005B DDRD=0xFF;   //PWM Pins as Out
 	OUT  0x11,R30
-; 0000 005C 
-; 0000 005D // Configure Timer1
-; 0000 005E TCCR1A|=(1<<COM1A1)|(1<<COM1B1)|(1<<WGM11);        //NON Inverted PWM
+; 0000 0090     PORTB = 0xFF;
+	OUT  0x18,R30
+; 0000 0091 
+; 0000 0092     // Timer/Counter 0 initialization
+; 0000 0093 // Clock source: System Clock
+; 0000 0094 // Clock value: 31.250 kHz
+; 0000 0095 // Mode: CTC top=OCR0
+; 0000 0096 // OC0 output: Disconnected
+; 0000 0097 // Timer Period: 8 ms
+; 0000 0098 TCCR0=(0<<WGM00) | (0<<COM01) | (0<<COM00) | (1<<WGM01) | (1<<CS02) | (0<<CS01) | (0<<CS00);
+	LDI  R30,LOW(12)
+	OUT  0x33,R30
+; 0000 0099 TCNT0=0x00;
+	LDI  R30,LOW(0)
+	OUT  0x32,R30
+; 0000 009A OCR0=0xF9;
+	LDI  R30,LOW(249)
+	OUT  0x3C,R30
+; 0000 009B 
+; 0000 009C     // Configure Timer1
+; 0000 009D     TCCR1A|=(1<<COM1A1)|(1<<COM1B1)|(1<<WGM11);     //NON Inverted PWM
 	IN   R30,0x2F
 	ORI  R30,LOW(0xA2)
 	OUT  0x2F,R30
-; 0000 005F TCCR1B|=(1<<WGM13)|(1<<WGM12)|(1<<CS11); //PRESCALER=8 MODE 14(FAST PWM)
+; 0000 009E     TCCR1B|=(1<<WGM13)|(1<<WGM12)|(1<<CS11);        //PRESCALER=8 MODE 14(FAST PWM)
 	IN   R30,0x2E
 	ORI  R30,LOW(0x1A)
 	OUT  0x2E,R30
-; 0000 0060 
-; 0000 0061 ICR1H=0x4E;  //fPWM=50Hz
+; 0000 009F 
+; 0000 00A0     // ICR = 19,999 so fPWM = 8,000,000/ (19,999+1) / 8 = 50Hz
+; 0000 00A1     ICR1H=0x4E;
 	LDI  R30,LOW(78)
 	OUT  0x27,R30
-; 0000 0062 ICR1L=0x1F;
+; 0000 00A2     ICR1L=0x1F;
 	LDI  R30,LOW(31)
 	OUT  0x26,R30
-; 0000 0063 
-; 0000 0064 // Configure Timer0
-; 0000 0065 // Clock value: 31.250 kHz
-; 0000 0066 // Timer Period: 8 ms
-; 0000 0067 TCCR0=(1<<CS02);
-	LDI  R30,LOW(4)
-	OUT  0x33,R30
-; 0000 0068 TCNT0=0x06;
-	LDI  R30,LOW(6)
-	OUT  0x32,R30
-; 0000 0069 OCR0=0x00;
-	LDI  R30,LOW(0)
-	OUT  0x3C,R30
-; 0000 006A 
-; 0000 006B // Alphanumeric LCD initialization
-; 0000 006C // Characters/line: 16
-; 0000 006D lcd_init(16);
+; 0000 00A3 
+; 0000 00A4 // Timer(s)/Counter(s) Interrupt(s) initialization
+; 0000 00A5 TIMSK=(0<<OCIE2) | (0<<TOIE2) | (0<<TICIE1) | (0<<OCIE1A) | (0<<OCIE1B) | (0<<TOIE1) | (0<<OCIE0) | (1<<TOIE0);
+	LDI  R30,LOW(1)
+	OUT  0x39,R30
+; 0000 00A6 
+; 0000 00A7 
+; 0000 00A8     lcd_init(16);
 	LDI  R26,LOW(16)
 	CALL _lcd_init
-; 0000 006E 
-; 0000 006F 
-; 0000 0070 // Global enable interrupts
-; 0000 0071 #asm("sei")
+; 0000 00A9 
+; 0000 00AA     // Start the servo at rest
+; 0000 00AB     /*
+; 0000 00AC     servo_position(0);
+; 0000 00AD     DC_motor(0);
+; 0000 00AE     */
+; 0000 00AF 
+; 0000 00B0     // Global enable interrupts
+; 0000 00B1     #asm("sei")
 	sei
-; 0000 0072 
-; 0000 0073 while (1)
-_0xD:
-; 0000 0074       {
-; 0000 0075         // Place your code here
-; 0000 0076 
-; 0000 0077         process_input();
-	RCALL _process_input
-; 0000 0078         LCD_controller(target);
-	MOVW R26,R10
+; 0000 00B2 
+; 0000 00B3     while (1) {
+_0x1D:
+; 0000 00B4         /*
+; 0000 00B5         // Place your code here
+; 0000 00B6         process_input();
+; 0000 00B7         LCD_controller(currentFloor);
+; 0000 00B8         process_dc_motors();
+; 0000 00B9         process_servo_motors();
+; 0000 00BA 
+; 0000 00BB         if(target==currentFloor){}
+; 0000 00BC         else {
+; 0000 00BD             // Checking for first iteration to avoid malfunction
+; 0000 00BE             if(firstIter) {
+; 0000 00BF                 doorOpen = 0;
+; 0000 00C0                 reset_timer();
+; 0000 00C1                 firstIter = 0;
+; 0000 00C2             }
+; 0000 00C3         }
+; 0000 00C4         */
+; 0000 00C5         LCD_controller(currentFloor);
+	MOVW R26,R8
 	RCALL _LCD_controller
-; 0000 0079 
-; 0000 007A       }
-	RJMP _0xD
-; 0000 007B }
-_0x10:
-	RJMP _0x10
+; 0000 00C6 
+; 0000 00C7         if(second%2){
+	MOVW R26,R6
+	LDI  R30,LOW(2)
+	LDI  R31,HIGH(2)
+	CALL __MODW21
+	SBIW R30,0
+	BREQ _0x20
+; 0000 00C8             servo_position(90);
+	LDI  R26,LOW(90)
+	LDI  R27,0
+	RCALL _servo_position
+; 0000 00C9             DC_motor(90);
+	LDI  R26,LOW(90)
+	RJMP _0x27
+; 0000 00CA         }
+; 0000 00CB         else {
+_0x20:
+; 0000 00CC             servo_position(0);
+	LDI  R26,LOW(0)
+	LDI  R27,0
+	RCALL _servo_position
+; 0000 00CD             DC_motor(0);
+	LDI  R26,LOW(0)
+_0x27:
+	LDI  R27,0
+	RCALL _DC_motor
+; 0000 00CE         }
+; 0000 00CF 
+; 0000 00D0     }
+	RJMP _0x1D
+; 0000 00D1 }
+_0x22:
+	RJMP _0x22
 ; .FEND
 	#ifndef __SLEEP_DEFINED__
 	#define __SLEEP_DEFINED__
@@ -1626,7 +1767,7 @@ _0x2000016:
 	LDI  R17,LOW(1)
 	RJMP _0x200001E
 _0x200001D:
-	CALL SUBOPT_0x0
+	CALL SUBOPT_0x1
 _0x200001E:
 	RJMP _0x200001B
 _0x200001C:
@@ -1634,7 +1775,7 @@ _0x200001C:
 	BRNE _0x200001F
 	CPI  R18,37
 	BRNE _0x2000020
-	CALL SUBOPT_0x0
+	CALL SUBOPT_0x1
 	RJMP _0x20000CC
 _0x2000020:
 	LDI  R17,LOW(2)
@@ -1691,26 +1832,26 @@ _0x2000029:
 	MOV  R30,R18
 	CPI  R30,LOW(0x63)
 	BRNE _0x200002F
-	CALL SUBOPT_0x1
+	CALL SUBOPT_0x2
 	LDD  R30,Y+16
 	LDD  R31,Y+16+1
 	LDD  R26,Z+4
 	ST   -Y,R26
-	CALL SUBOPT_0x2
+	CALL SUBOPT_0x3
 	RJMP _0x2000030
 _0x200002F:
 	CPI  R30,LOW(0x73)
 	BRNE _0x2000032
-	CALL SUBOPT_0x1
-	CALL SUBOPT_0x3
+	CALL SUBOPT_0x2
+	CALL SUBOPT_0x4
 	CALL _strlen
 	MOV  R17,R30
 	RJMP _0x2000033
 _0x2000032:
 	CPI  R30,LOW(0x70)
 	BRNE _0x2000035
-	CALL SUBOPT_0x1
-	CALL SUBOPT_0x3
+	CALL SUBOPT_0x2
+	CALL SUBOPT_0x4
 	CALL _strlenf
 	MOV  R17,R30
 	ORI  R16,LOW(8)
@@ -1755,8 +1896,8 @@ _0x2000040:
 _0x200003D:
 	SBRS R16,2
 	RJMP _0x2000042
-	CALL SUBOPT_0x1
-	CALL SUBOPT_0x4
+	CALL SUBOPT_0x2
+	CALL SUBOPT_0x5
 	LDD  R26,Y+11
 	TST  R26
 	BRPL _0x2000043
@@ -1776,8 +1917,8 @@ _0x2000044:
 _0x2000045:
 	RJMP _0x2000046
 _0x2000042:
-	CALL SUBOPT_0x1
-	CALL SUBOPT_0x4
+	CALL SUBOPT_0x2
+	CALL SUBOPT_0x5
 _0x2000046:
 _0x2000036:
 	SBRC R16,0
@@ -1800,7 +1941,7 @@ _0x200004D:
 _0x200004B:
 	LDI  R18,LOW(32)
 _0x200004E:
-	CALL SUBOPT_0x0
+	CALL SUBOPT_0x1
 	SUBI R21,LOW(1)
 	RJMP _0x2000048
 _0x200004A:
@@ -1826,7 +1967,7 @@ _0x2000053:
 	STD  Y+6,R26
 	STD  Y+6+1,R27
 _0x2000054:
-	CALL SUBOPT_0x0
+	CALL SUBOPT_0x1
 	CPI  R21,0
 	BREQ _0x2000055
 	SUBI R21,LOW(1)
@@ -1905,7 +2046,7 @@ _0x20000CD:
 	RJMP _0x200006A
 	ANDI R16,LOW(251)
 	ST   -Y,R20
-	CALL SUBOPT_0x2
+	CALL SUBOPT_0x3
 	CPI  R21,0
 	BREQ _0x200006B
 	SUBI R21,LOW(1)
@@ -1913,7 +2054,7 @@ _0x200006B:
 _0x200006A:
 _0x2000069:
 _0x2000061:
-	CALL SUBOPT_0x0
+	CALL SUBOPT_0x1
 	CPI  R21,0
 	BREQ _0x200006C
 	SUBI R21,LOW(1)
@@ -1935,7 +2076,7 @@ _0x200006E:
 	SUBI R21,LOW(1)
 	LDI  R30,LOW(32)
 	ST   -Y,R30
-	CALL SUBOPT_0x2
+	CALL SUBOPT_0x3
 	RJMP _0x200006E
 _0x2000070:
 _0x200006D:
@@ -1959,18 +2100,18 @@ _sprintf:
 	MOV  R15,R24
 	SBIW R28,6
 	CALL __SAVELOCR4
-	CALL SUBOPT_0x5
+	CALL SUBOPT_0x6
 	SBIW R30,0
 	BRNE _0x2000072
 	LDI  R30,LOW(65535)
 	LDI  R31,HIGH(65535)
-	RJMP _0x2080002
+	RJMP _0x2080003
 _0x2000072:
 	MOVW R26,R28
 	ADIW R26,6
 	CALL __ADDW2R15
 	MOVW R16,R26
-	CALL SUBOPT_0x5
+	CALL SUBOPT_0x6
 	STD  Y+6,R30
 	STD  Y+6+1,R31
 	LDI  R30,LOW(0)
@@ -1997,7 +2138,7 @@ _0x2000072:
 	LDI  R30,LOW(0)
 	ST   X,R30
 	MOVW R30,R18
-_0x2080002:
+_0x2080003:
 	CALL __LOADLOCR4
 	ADIW R28,10
 	POP  R15
@@ -2061,17 +2202,18 @@ _lcd_gotoxy:
 	RCALL __lcd_write_data
 	LDD  R13,Y+1
 	LDD  R12,Y+0
+_0x2080002:
 	ADIW R28,2
 	RET
 ; .FEND
 _lcd_clear:
 ; .FSTART _lcd_clear
 	LDI  R26,LOW(2)
-	CALL SUBOPT_0x6
+	CALL SUBOPT_0x7
 	LDI  R26,LOW(12)
 	RCALL __lcd_write_data
 	LDI  R26,LOW(1)
-	CALL SUBOPT_0x6
+	CALL SUBOPT_0x7
 	LDI  R30,LOW(0)
 	MOV  R12,R30
 	MOV  R13,R30
@@ -2149,9 +2291,9 @@ _lcd_init:
 	LDI  R26,LOW(20)
 	LDI  R27,0
 	CALL _delay_ms
-	CALL SUBOPT_0x7
-	CALL SUBOPT_0x7
-	CALL SUBOPT_0x7
+	CALL SUBOPT_0x8
+	CALL SUBOPT_0x8
+	CALL SUBOPT_0x8
 	LDI  R26,LOW(32)
 	RCALL __lcd_write_nibble_G101
 	__DELAY_USW 200
@@ -2215,8 +2357,14 @@ __lcd_maxx:
 	.BYTE 0x1
 
 	.CSEG
-;OPTIMIZER ADDED SUBROUTINE, CALLED 5 TIMES, CODE SIZE REDUCTION:13 WORDS
+;OPTIMIZER ADDED SUBROUTINE, CALLED 5 TIMES, CODE SIZE REDUCTION:5 WORDS
 SUBOPT_0x0:
+	CALL __CWD1
+	CALL __PUTPARD1
+	RET
+
+;OPTIMIZER ADDED SUBROUTINE, CALLED 5 TIMES, CODE SIZE REDUCTION:13 WORDS
+SUBOPT_0x1:
 	ST   -Y,R18
 	LDD  R26,Y+13
 	LDD  R27,Y+13+1
@@ -2226,7 +2374,7 @@ SUBOPT_0x0:
 	RET
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 5 TIMES, CODE SIZE REDUCTION:9 WORDS
-SUBOPT_0x1:
+SUBOPT_0x2:
 	LDD  R30,Y+16
 	LDD  R31,Y+16+1
 	SBIW R30,4
@@ -2235,7 +2383,7 @@ SUBOPT_0x1:
 	RET
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 3 TIMES, CODE SIZE REDUCTION:3 WORDS
-SUBOPT_0x2:
+SUBOPT_0x3:
 	LDD  R26,Y+13
 	LDD  R27,Y+13+1
 	LDD  R30,Y+15
@@ -2244,7 +2392,7 @@ SUBOPT_0x2:
 	RET
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 2 TIMES, CODE SIZE REDUCTION:4 WORDS
-SUBOPT_0x3:
+SUBOPT_0x4:
 	LDD  R26,Y+16
 	LDD  R27,Y+16+1
 	ADIW R26,4
@@ -2256,7 +2404,7 @@ SUBOPT_0x3:
 	RET
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 2 TIMES, CODE SIZE REDUCTION:2 WORDS
-SUBOPT_0x4:
+SUBOPT_0x5:
 	LDD  R26,Y+16
 	LDD  R27,Y+16+1
 	ADIW R26,4
@@ -2266,7 +2414,7 @@ SUBOPT_0x4:
 	RET
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 2 TIMES, CODE SIZE REDUCTION:1 WORDS
-SUBOPT_0x5:
+SUBOPT_0x6:
 	MOVW R26,R28
 	ADIW R26,12
 	CALL __ADDW2R15
@@ -2274,14 +2422,14 @@ SUBOPT_0x5:
 	RET
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 2 TIMES, CODE SIZE REDUCTION:1 WORDS
-SUBOPT_0x6:
+SUBOPT_0x7:
 	CALL __lcd_write_data
 	LDI  R26,LOW(3)
 	LDI  R27,0
 	JMP  _delay_ms
 
 ;OPTIMIZER ADDED SUBROUTINE, CALLED 3 TIMES, CODE SIZE REDUCTION:7 WORDS
-SUBOPT_0x7:
+SUBOPT_0x8:
 	LDI  R26,LOW(48)
 	CALL __lcd_write_nibble_G101
 	__DELAY_USW 200
@@ -2317,6 +2465,92 @@ __CWD1:
 	ADD  R22,R22
 	SBC  R22,R22
 	MOV  R23,R22
+	RET
+
+__MULW12U:
+	MUL  R31,R26
+	MOV  R31,R0
+	MUL  R30,R27
+	ADD  R31,R0
+	MUL  R30,R26
+	MOV  R30,R0
+	ADD  R31,R1
+	RET
+
+__MULW12:
+	RCALL __CHKSIGNW
+	RCALL __MULW12U
+	BRTC __MULW121
+	RCALL __ANEGW1
+__MULW121:
+	RET
+
+__DIVW21U:
+	CLR  R0
+	CLR  R1
+	LDI  R25,16
+__DIVW21U1:
+	LSL  R26
+	ROL  R27
+	ROL  R0
+	ROL  R1
+	SUB  R0,R30
+	SBC  R1,R31
+	BRCC __DIVW21U2
+	ADD  R0,R30
+	ADC  R1,R31
+	RJMP __DIVW21U3
+__DIVW21U2:
+	SBR  R26,1
+__DIVW21U3:
+	DEC  R25
+	BRNE __DIVW21U1
+	MOVW R30,R26
+	MOVW R26,R0
+	RET
+
+__DIVW21:
+	RCALL __CHKSIGNW
+	RCALL __DIVW21U
+	BRTC __DIVW211
+	RCALL __ANEGW1
+__DIVW211:
+	RET
+
+__MODW21:
+	CLT
+	SBRS R27,7
+	RJMP __MODW211
+	COM  R26
+	COM  R27
+	ADIW R26,1
+	SET
+__MODW211:
+	SBRC R31,7
+	RCALL __ANEGW1
+	RCALL __DIVW21U
+	MOVW R30,R26
+	BRTC __MODW212
+	RCALL __ANEGW1
+__MODW212:
+	RET
+
+__CHKSIGNW:
+	CLT
+	SBRS R31,7
+	RJMP __CHKSW1
+	RCALL __ANEGW1
+	SET
+__CHKSW1:
+	SBRS R27,7
+	RJMP __CHKSW2
+	COM  R26
+	COM  R27
+	ADIW R26,1
+	BLD  R0,0
+	INC  R0
+	BST  R0,0
+__CHKSW2:
 	RET
 
 __GETW1P:

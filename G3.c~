@@ -1,6 +1,9 @@
 #include <mega32.h>
-#include <delay.h>
 #include <stdio.h>
+#include <delay.h>
+
+// Alphanumeric LCD functions
+#include <alcd.h>
 
 // Declare your global variables here
 int globalTimer = 0;    // Global timer with period of 8 ms
@@ -10,42 +13,35 @@ int currentFloor = 0;   // The current floor
 int target = 0;         // This is the target floor
 bit locked = 0;         // The Elevator is now locked
 bit firstIter = 1;      // First Iter is for reseting the timer and servo position
-
-// Alphanumeric LCD functions
-#include <alcd.h>
+bit DCMotors = 0;       // Controlling the DC motors
+bit shouldMove = 0;     // This bit is for making sure we are capturing the inputs
+bit doorOpen = 1;       // Checking door
 
 // Timer 0 overflow interrupt service routine
 interrupt [TIM0_OVF] void timer0_ovf_isr(void)
 {
-    // Reinitialize Timer 0 value
-    TCNT0=0x06;
-    
-    globalTimer++;          // After an interval of 8 ms, globalTimer is incremented 
-    if(globalTimer==125) second++;  // 125 * 8 ms = 1s so we are keeping account of the seconds
+    // Place your code here 
+    globalTimer++;
+    if(globalTimer%125==0) {
+        second++;
+        globalTimer = 0;
+    }
 }
 
-// Reseting the main timer to avoid malfunction
+// Reset timer and globalTimer and second
 void reset_timer()
 {
-    TCNT0 = 0x06;       // Set the counter to zero
+    TCNT0 = 0x00;       // Set the counter to zero
     globalTimer = 0;    // 8ms counter is reset 
     second = 0;         // Resetting the second
-}
-
-// Writing to LCD
-void LCD_controller(int level)
-{
-    char currFloor[16] = "";                    // What we are going to display 
-    sprintf(currFloor,"Floor: %d",level);       // Making the text ready for display
-    lcd_gotoxy(0,0);                            //lcd_gotoxy ham k cursor ro b xy mibarad 
-    lcd_puts(currFloor);                        // chap bar roye lcd
+    lcd_clear();
 }
 
 // For controlling the DC Motors
 void DC_motor(int position)
 {
     // The PWM is in range of 0 to 19999!
-    OCR1B = 1499 + position * 50/9; 
+    OCR1B = (position) * 10 * 20; 
 }
 
 // Given a degree, the servo with move to the desired degree/step.
@@ -58,13 +54,15 @@ void servo_position(int position)
     OCR1A = 1499 + position * 50/9; 
 }
 
+// Processing the input from buttons
 void process_input()
 {
+    
     // First of all we have to check whether we are in locked mode or not
-    if(!locked) {
-        target = 255-PINB; // PINB is the input/target
+    if(!locked && !shouldMove) {
+        int tempTarget = 255-PINB; // PINB is the input/target
         
-        switch(target)
+        switch(tempTarget)
         {
             case 1:
                 target = 0;
@@ -82,18 +80,78 @@ void process_input()
                 target = 4;
                 break;    
         }
+        
+        if(target!=currentFloor) shouldMove = 1;
     }
 }
 
+// Processing the floor to be displayed in LCD and furthur processings
+void process_floors()
+{
+    if(target>currentFloor) currentFloor++;
+    else currentFloor--;
+}
+
+// Moving the servo motors
+void process_servo_motors()
+{
+    if(doorOpen)    servo_position(0);
+    else    servo_position(90);
+}
+
+// Moving the DC motors as well as controlling the speed
+void process_dc_motors()
+{
+    // Difference of floors
+    int difference = target - difference;
+    // If negative, negate it
+    if(difference < 0) difference*=-1; 
+     
+    // If DC motors should be moving start moving them
+    if(DCMotors){
+        // If we are in the first second, accelerate and if we are in the middle of the transportation
+        // constant speed. Otherwise, decelerate
+        
+        if(second <= 1)
+            DC_motor(80 * globalTimer * 10);
+        else if(second == 4 && difference == 1) DC_motor(80 * (125-globalTimer) * 10);
+        else DC_motor(80*125*10);
+    }
+}
+
+// Writing to LCD
+void LCD_controller(int level)
+{
+    char currFloor[16] = "";                    // What we are going to display
+    char myMan[16] = "";
+     
+    sprintf(currFloor,"F: %d, %d, %d",level, globalTimer, second);       // Making the text ready for display
+    lcd_gotoxy(0,0);                            //lcd_gotoxy ham k cursor ro b xy mibarad 
+    lcd_puts(currFloor);                        // chap bar roye lcd
+    
+    sprintf(myMan,"CF: %d,T: %d",currentFloor, target);    // Making the text ready for display
+    lcd_gotoxy(0,1);                            //lcd_gotoxy ham k cursor ro b xy mibarad 
+    lcd_puts(myMan); 
+}
+
+// Well this is obvious
 void main(void)
 {
+    // Declare your local variables here
+    DDRA = 0xFF;
+    DDRB = 0x00;
+    DDRD = 0xFF;
+    PORTB = 0xFF;
 
-    // PORTB is input port
-    DDRB=0x00;
-    PORTB=0xFF;
-
-    // PORTD is output for PWM
-    DDRD=0xFF;
+    // Timer/Counter 0 initialization
+// Clock source: System Clock
+// Clock value: 31.250 kHz
+// Mode: CTC top=OCR0
+// OC0 output: Disconnected
+// Timer Period: 8 ms
+TCCR0=(0<<WGM00) | (0<<COM01) | (0<<COM00) | (1<<WGM01) | (1<<CS02) | (0<<CS01) | (0<<CS00);
+TCNT0=0x00;
+OCR0=0xF9;
 
     // Configure Timer1
     TCCR1A|=(1<<COM1A1)|(1<<COM1B1)|(1<<WGM11);     //NON Inverted PWM
@@ -102,41 +160,49 @@ void main(void)
     // ICR = 19,999 so fPWM = 8,000,000/ (19,999+1) / 8 = 50Hz
     ICR1H=0x4E;
     ICR1L=0x1F;
-    
-    // Configure Timer0
-    // Clock value: 31.250 kHz
-    // Timer Period: 8 ms
-    TCCR0=(1<<CS02);
-    TCNT0=0x06;
-    OCR0=0x00;
 
-    // Alphanumeric LCD initialization
-    // Characters/line: 16
+// Timer(s)/Counter(s) Interrupt(s) initialization
+TIMSK=(0<<OCIE2) | (0<<TOIE2) | (0<<TICIE1) | (0<<OCIE1A) | (0<<OCIE1B) | (0<<TOIE1) | (0<<OCIE0) | (1<<TOIE0);
+
+
     lcd_init(16);
 
+    // Start the servo at rest
+    /*
+    servo_position(0);
+    DC_motor(0);
+    */
 
     // Global enable interrupts
     #asm("sei")
 
-    while (1)
-    {
+    while (1) {
+        /*
         // Place your code here
-        
         process_input();
-        LCD_controller(target);
-        
-        if(target==currentFloor){} // We could display a message here
+        LCD_controller(currentFloor);
+        process_dc_motors();
+        process_servo_motors();
+
+        if(target==currentFloor){}
         else {
+            // Checking for first iteration to avoid malfunction
             if(firstIter) {
+                doorOpen = 0;
                 reset_timer();
-                firstIter = 0;
-                servo_position(90);
+                firstIter = 0;                
             }
-            if(second==1) {
-                // Start the DC Motor
-                locked = 1;            
-            }
-                                        
-        }                
+        }
+        */
+        LCD_controller(currentFloor);
+        
+        servo_position(90);
+        DC_motor(90);
+        delay_ms(1000);
+        
+        servo_position(0);
+        DC_motor(0);
+        delay_ms(1000);
+        
     }
 }
